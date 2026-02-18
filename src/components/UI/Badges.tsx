@@ -1,4 +1,5 @@
-import type { TaskPriority, EnergyLevel, TaskStatus } from '../../types'
+import { RefreshCw } from 'lucide-react'
+import type { TaskPriority, EnergyLevel, TaskStatus, RecurringInterval } from '../../types'
 
 // ─── Priority Badge ───────────────────────────────────────────────────────────
 
@@ -43,4 +44,22 @@ const statusConfig: Record<TaskStatus, { label: string; className: string }> = {
 export function StatusBadge({ status }: { status: TaskStatus }) {
   const { label, className } = statusConfig[status]
   return <span className={`badge ${className}`}>{label}</span>
+}
+
+// ─── Recurring Badge ──────────────────────────────────────────────────────────
+
+const recurringLabel: Record<RecurringInterval, string> = {
+  daily:   'Daily',
+  weekly:  'Weekly',
+  monthly: 'Monthly',
+  custom:  'Custom',
+}
+
+export function RecurringBadge({ interval }: { interval: RecurringInterval }) {
+  return (
+    <span className="badge bg-violet-950 text-violet-400">
+      <RefreshCw size={10} />
+      {recurringLabel[interval]}
+    </span>
+  )
 }

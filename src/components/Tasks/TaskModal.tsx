@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, X, RefreshCw } from 'lucide-react'
 import { Modal } from '../UI/Modal'
 import { useTaskStore } from '../../store/taskStore'
-import type { Task, TaskPriority, EnergyLevel } from '../../types'
+import type { Task, TaskPriority, EnergyLevel, RecurringInterval } from '../../types'
 
 interface TaskModalProps {
   open: boolean
@@ -18,6 +18,9 @@ const emptyForm = {
   estimatedMinutes: '',
   dueDate: '',
   tags: '',
+  recurring: false,
+  recurringInterval: 'weekly' as RecurringInterval,
+  recurringCustomDays: '7',
 }
 
 export function TaskModal({ open, onClose, task }: TaskModalProps) {
@@ -40,6 +43,9 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
           estimatedMinutes: task.estimatedMinutes ? String(task.estimatedMinutes) : '',
           dueDate: task.dueDate ? task.dueDate.slice(0, 10) : '',
           tags: task.tags.join(', '),
+          recurring: !!task.recurring,
+          recurringInterval: task.recurring?.interval ?? 'weekly',
+          recurringCustomDays: String(task.recurring?.customDays ?? 7),
         })
         setSubtasks(task.subtasks)
       } else {
@@ -67,18 +73,27 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
     e.preventDefault()
     if (!form.title.trim()) { setError('Title is required'); return }
 
+    const dueDateISO = form.dueDate ? new Date(form.dueDate).toISOString() : undefined
+
+    const recurringConfig = form.recurring
+      ? {
+          interval: form.recurringInterval,
+          customDays:
+            form.recurringInterval === 'custom' ? Number(form.recurringCustomDays) : undefined,
+          nextOccurrence: dueDateISO ?? new Date().toISOString(),
+        }
+      : undefined
+
     const payload = {
       title: form.title.trim(),
       description: form.description.trim(),
       priority: form.priority,
       energyLevel: form.energyLevel,
       estimatedMinutes: form.estimatedMinutes ? Number(form.estimatedMinutes) : undefined,
-      dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
-      tags: form.tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean),
+      dueDate: dueDateISO,
+      tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
       subtasks,
+      recurring: recurringConfig,
     }
 
     if (isEdit && task) {
@@ -89,19 +104,28 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
     onClose()
   }
 
-  const field = (key: keyof typeof form) => ({
-    value: form[key],
+  function setField<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setForm((f) => ({ ...f, [key]: value }))
+  }
+
+  const inputField = (key: keyof typeof form) => ({
+    value: form[key] as string,
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setForm((f) => ({ ...f, [key]: e.target.value })),
   })
 
   return (
-    <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Task' : 'New Task'}>
+    <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Task' : 'New Task'} width="max-w-xl">
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Title */}
         <div>
           <label className="block text-xs font-medium text-gray-400 mb-1">Title *</label>
-          <input className="input" placeholder="What needs to be done?" autoFocus {...field('title')} />
+          <input
+            className="input"
+            placeholder="What needs to be done?"
+            autoFocus
+            {...inputField('title')}
+          />
           {error && <p className="text-xs text-rose-400 mt-1">{error}</p>}
         </div>
 
@@ -112,7 +136,7 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
             className="input resize-none"
             rows={2}
             placeholder="Optional details..."
-            {...field('description')}
+            {...inputField('description')}
           />
         </div>
 
@@ -120,7 +144,7 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1">Priority</label>
-            <select className="input" {...field('priority')}>
+            <select className="input" {...inputField('priority')}>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
@@ -128,8 +152,8 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1">Energy</label>
-            <select className="input" {...field('energyLevel')}>
+            <label className="block text-xs font-medium text-gray-400 mb-1">Energy Required</label>
+            <select className="input" {...inputField('energyLevel')}>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
@@ -141,7 +165,7 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1">Due Date</label>
-            <input type="date" className="input" {...field('dueDate')} />
+            <input type="date" className="input" {...inputField('dueDate')} />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1">Est. Minutes</label>
@@ -150,7 +174,7 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
               min="1"
               className="input"
               placeholder="e.g. 30"
-              {...field('estimatedMinutes')}
+              {...inputField('estimatedMinutes')}
             />
           </div>
         </div>
@@ -160,10 +184,79 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
           <label className="block text-xs font-medium text-gray-400 mb-1">
             Tags <span className="text-gray-600">(comma-separated)</span>
           </label>
-          <input className="input" placeholder="design, frontend, urgent" {...field('tags')} />
+          <input className="input" placeholder="design, frontend, urgent" {...inputField('tags')} />
         </div>
 
-        {/* Subtasks */}
+        {/* ─── Recurring ─────────────────────────────────────────────── */}
+        <div className="rounded-lg border border-[#1f2937] p-3 space-y-3">
+          <label className="flex items-center justify-between cursor-pointer">
+            <span className="flex items-center gap-2 text-xs font-medium text-gray-300">
+              <RefreshCw size={13} className="text-violet-400" />
+              Repeat this task
+            </span>
+            {/* Toggle */}
+            <button
+              type="button"
+              onClick={() => setField('recurring', !form.recurring)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                form.recurring ? 'bg-violet-600' : 'bg-[#374151]'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  form.recurring ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </label>
+
+          {form.recurring && (
+            <div className="space-y-3">
+              {/* Interval selector */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Repeat every</label>
+                <div className="flex gap-2">
+                  {(['daily', 'weekly', 'monthly', 'custom'] as RecurringInterval[]).map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setField('recurringInterval', opt)}
+                      className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                        form.recurringInterval === opt
+                          ? 'bg-violet-600 text-white'
+                          : 'bg-[#0d0d0d] text-gray-500 hover:text-gray-300 border border-[#1f2937]'
+                      }`}
+                    >
+                      {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom days input */}
+              {form.recurringInterval === 'custom' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                    Every N days
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="input"
+                    placeholder="e.g. 3"
+                    {...inputField('recurringCustomDays')}
+                  />
+                </div>
+              )}
+
+              <p className="text-xs text-gray-600">
+                When you complete this task, a new one will appear automatically with the next due date.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* ─── Subtasks ──────────────────────────────────────────────── */}
         <div>
           <label className="block text-xs font-medium text-gray-400 mb-1">Subtasks</label>
           <div className="flex gap-2">
@@ -172,7 +265,9 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
               placeholder="Add a subtask..."
               value={subtaskInput}
               onChange={(e) => setSubtaskInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSubtask() } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); addSubtask() }
+              }}
             />
             <button type="button" onClick={addSubtask} className="btn-ghost flex-shrink-0">
               <Plus size={14} />
@@ -181,7 +276,10 @@ export function TaskModal({ open, onClose, task }: TaskModalProps) {
           {subtasks.length > 0 && (
             <ul className="mt-2 space-y-1">
               {subtasks.map((st) => (
-                <li key={st.id} className="flex items-center justify-between px-2 py-1 rounded bg-[#0d0d0d] text-xs text-gray-400">
+                <li
+                  key={st.id}
+                  className="flex items-center justify-between px-2 py-1 rounded bg-[#0d0d0d] text-xs text-gray-400"
+                >
                   {st.title}
                   <button type="button" onClick={() => removeSubtask(st.id)}>
                     <X size={12} className="text-gray-600 hover:text-rose-400" />

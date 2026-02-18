@@ -2,14 +2,15 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   CheckCircle2, Circle, Clock, ChevronDown, ChevronRight,
-  Trash2, Pencil, GripVertical, Calendar, Tag,
+  Trash2, Pencil, GripVertical, Calendar, Tag, Play, Square,
 } from 'lucide-react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { format, isPast, isToday } from 'date-fns'
 import type { Task } from '../../types'
 import { useTaskStore } from '../../store/taskStore'
-import { PriorityBadge, EnergyBadge } from '../UI/Badges'
+import { PriorityBadge, EnergyBadge, RecurringBadge } from '../UI/Badges'
+import { useTimer, formatElapsed, formatMinutes } from '../../hooks/useTimer'
 
 interface TaskCardProps {
   task: Task
@@ -23,8 +24,9 @@ const statusCycle = {
 } as const
 
 export function TaskCard({ task, onEdit }: TaskCardProps) {
-  const { setStatus, deleteTask, toggleSubtask } = useTaskStore()
+  const { setStatus, deleteTask, toggleSubtask, startTimer, stopTimer } = useTaskStore()
   const [expanded, setExpanded] = useState(false)
+  const { isRunning, elapsedSeconds } = useTimer(task.id)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -42,16 +44,25 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
   const dueDateOverdue =
     task.dueDate && isPast(new Date(task.dueDate)) && task.status !== 'completed'
   const dueDateToday = task.dueDate && isToday(new Date(task.dueDate))
+  const dueDateColor = dueDateOverdue ? 'text-rose-400' : dueDateToday ? 'text-amber-400' : 'text-gray-500'
 
-  const dueDateColor = dueDateOverdue
-    ? 'text-rose-400'
-    : dueDateToday
-    ? 'text-amber-400'
-    : 'text-gray-500'
+  // Time accuracy colour: green if under estimate, amber if close, rose if over
+  function timeAccuracyColor(actual: number, estimated?: number): string {
+    if (!estimated || actual === 0) return 'text-gray-500'
+    const ratio = actual / estimated
+    if (ratio <= 0.9) return 'text-teal-400'
+    if (ratio <= 1.1) return 'text-amber-400'
+    return 'text-rose-400'
+  }
 
   function cycleStatus() {
-    const next = statusCycle[task.status]
-    setStatus(task.id, next)
+    setStatus(task.id, statusCycle[task.status])
+  }
+
+  function handleTimerToggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (isRunning) stopTimer()
+    else startTimer(task.id)
   }
 
   return (
@@ -63,8 +74,8 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8, scale: 0.97 }}
       transition={{ duration: 0.18 }}
-      className={`card group relative mb-2 ${
-        task.status === 'completed' ? 'opacity-60' : ''
+      className={`card group relative mb-2 ${task.status === 'completed' ? 'opacity-60' : ''} ${
+        isRunning ? 'border-purple-700/60 shadow-[0_0_0_1px_rgba(124,58,237,0.25)]' : ''
       }`}
     >
       <div className="flex items-start gap-3">
@@ -102,9 +113,7 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
           <div className="flex items-start justify-between gap-2">
             <p
               className={`text-sm font-medium leading-snug ${
-                task.status === 'completed'
-                  ? 'line-through text-gray-600'
-                  : 'text-gray-100'
+                task.status === 'completed' ? 'line-through text-gray-600' : 'text-gray-100'
               }`}
             >
               {task.title}
@@ -112,6 +121,20 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
 
             {/* Actions — visible on hover */}
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+              {/* Timer toggle */}
+              {task.status !== 'completed' && (
+                <button
+                  onClick={handleTimerToggle}
+                  className={`p-1 rounded transition-colors ${
+                    isRunning
+                      ? 'text-purple-400 hover:text-purple-300 hover:bg-purple-950/40'
+                      : 'text-gray-600 hover:text-gray-300 hover:bg-[#1f2937]'
+                  }`}
+                  title={isRunning ? 'Stop timer' : 'Start timer'}
+                >
+                  {isRunning ? <Square size={13} /> : <Play size={13} />}
+                </button>
+              )}
               <button
                 onClick={() => onEdit(task)}
                 className="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-[#1f2937] transition-colors"
@@ -132,10 +155,36 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
             <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{task.description}</p>
           )}
 
+          {/* Live timer display */}
+          <AnimatePresence>
+            {isRunning && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <motion.div
+                    animate={{ opacity: [1, 0.4, 1] }}
+                    transition={{ duration: 1.2, repeat: Infinity }}
+                    className="w-1.5 h-1.5 rounded-full bg-purple-400"
+                  />
+                  <span className="text-xs font-mono text-purple-300">
+                    {formatElapsed(elapsedSeconds)}
+                  </span>
+                  <span className="text-xs text-gray-600">running</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Meta row */}
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <PriorityBadge priority={task.priority} />
             <EnergyBadge energy={task.energyLevel} />
+
+            {task.recurring && <RecurringBadge interval={task.recurring.interval} />}
 
             {task.dueDate && (
               <span className={`flex items-center gap-1 text-xs ${dueDateColor}`}>
@@ -146,10 +195,27 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
               </span>
             )}
 
-            {task.estimatedMinutes && (
-              <span className="flex items-center gap-1 text-xs text-gray-600">
+            {/* Time: estimated vs actual */}
+            {(task.estimatedMinutes || task.actualMinutes > 0) && (
+              <span
+                className={`flex items-center gap-1 text-xs ${timeAccuracyColor(
+                  task.actualMinutes,
+                  task.estimatedMinutes
+                )}`}
+                title={
+                  task.estimatedMinutes
+                    ? `Estimated: ${formatMinutes(task.estimatedMinutes)} · Actual: ${formatMinutes(task.actualMinutes)}`
+                    : `Actual: ${formatMinutes(task.actualMinutes)}`
+                }
+              >
                 <Clock size={11} />
-                {task.estimatedMinutes}m
+                {task.actualMinutes > 0 && <span>{formatMinutes(task.actualMinutes)}</span>}
+                {task.estimatedMinutes && task.actualMinutes > 0 && (
+                  <span className="text-gray-700">/</span>
+                )}
+                {task.estimatedMinutes && (
+                  <span className="text-gray-600">{formatMinutes(task.estimatedMinutes)}</span>
+                )}
               </span>
             )}
 
@@ -161,7 +227,7 @@ export function TaskCard({ task, onEdit }: TaskCardProps) {
             ))}
           </div>
 
-          {/* Subtask progress bar */}
+          {/* Subtask progress bar + list */}
           {task.subtasks.length > 0 && (
             <div className="mt-2">
               <button
